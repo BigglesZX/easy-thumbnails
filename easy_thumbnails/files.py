@@ -1,5 +1,6 @@
 import os
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.files.base import File, ContentFile
 from django.core.files.storage import default_storage, Storage
 from django.core.files.images import get_image_dimensions
@@ -14,6 +15,22 @@ from easy_thumbnails import engine, exceptions, models, utils, signals, storage
 from easy_thumbnails.alias import aliases
 from easy_thumbnails.conf import settings
 from easy_thumbnails.options import ThumbnailOptions
+from easy_thumbnails.utils import get_storage_hash
+from easy_thumbnails.version_utils import get_version
+
+
+if settings.THUMBNAIL_CACHE:
+    try:
+        from django.core.cache import caches
+        cache = caches[settings.THUMBNAIL_CACHE]
+    except ImportError:
+        raise ImproperlyConfigured(
+            'You are trying to use the cache on a version of Django '
+            'that does not support caching')
+    except KeyError:
+        raise ImproperlyConfigured(
+            "The cache specified in `THUMBNAIL_CACHE` doesn't seem "
+            "to exist")
 
 
 def get_thumbnailer(obj, relative_name=None):
@@ -267,11 +284,21 @@ class ThumbnailFile(ImageFieldFile):
             return super().open(mode, *args, **kwargs)
 
     def _get_image_dimensions(self):
+        if settings.THUMBNAIL_CACHE and settings.THUMBNAIL_QUERYSET_CACHING:
+            cache_key = self._get_cache_key('dimensions')
+            cached = cache.get(cache_key)
+            if cached is not None:
+                self._dimensions_cache = cached
+
         if not hasattr(self, '_dimensions_cache'):
             close = self.closed
             self.open()
             self._dimensions_cache = database_get_image_dimensions(
                 self, close=close)
+            
+            if settings.THUMBNAIL_CACHE and settings.THUMBNAIL_QUERYSET_CACHING:
+                cache.set(cache_key, self._dimensions_cache, None)
+        
         return self._dimensions_cache
 
     def set_image_dimensions(self, thumbnail):
@@ -287,6 +314,35 @@ class ThumbnailFile(ImageFieldFile):
             return False
         self._dimensions_cache = dimensions.size
         return self._dimensions_cache
+    
+    def _get_cache_key(self, subkey):
+        version = get_version()
+        storage_hash = get_storage_hash(self.storage)
+        return f"easy_thumbnails:{version}:ThumbnailFile:{subkey}:{storage_hash}:{self.name}"
+    
+    def _delete_cache_keys(self):
+        cache_key = self._get_cache_key('dimensions')
+        cache.delete(cache_key)
+        cache_key = self._get_cache_key('url')
+        cache.delete(cache_key)
+
+    @property
+    def url(self):
+        """
+        Use cached value for `url` property if available
+        """
+        if not (settings.THUMBNAIL_CACHE and settings.THUMBNAIL_URL_CACHING):
+            return super().url
+        
+        cache_key = self._get_cache_key('url')
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        original = super().url
+        if original is not None:
+            cache.set(cache_key, original, None)
+        return original
 
 
 class Thumbnailer(File):
@@ -332,7 +388,7 @@ class Thumbnailer(File):
             if getattr(self, attr_name, None) is None:
                 value = getattr(settings, attr_name.upper())
                 setattr(self, attr_name, value)
-
+    
     def __getitem__(self, alias):
         """
         Retrieve a thumbnail matching the alias options (or raise a
@@ -654,6 +710,15 @@ class ThumbnailerFieldFile(FieldFile, Thumbnailer):
         self.delete_thumbnails(source_cache)
         # Next, delete the source image.
         super().delete(*args, **kwargs)
+
+        # Delete memcached entries
+        if settings.THUMBNAIL_CACHE and settings.THUMBNAIL_QUERYSET_CACHING:
+            kwargs = {
+                'storage_hash': source_cache.storage_hash,
+                'name': source_cache.name,
+            }
+            source_cache.__class__.objects._delete_cache_key(kwargs)
+        
         # Finally, delete the source cache entry.
         if source_cache and source_cache.pk is not None:
             source_cache.delete()
@@ -677,6 +742,18 @@ class ThumbnailerFieldFile(FieldFile, Thumbnailer):
                 # Only attempt to delete the file if it was stored using the
                 # same storage as is currently used.
                 if thumbnail_cache.storage_hash == thumbnail_storage_hash:
+
+                    if settings.THUMBNAIL_CACHE:
+                        file = ThumbnailFile(name=thumbnail_cache.name, storage=self.thumbnail_storage)
+                        file._delete_cache_keys()
+
+                        kwargs = {
+                            'storage_hash': thumbnail_cache.storage_hash,
+                            'name': thumbnail_cache.name,
+                            'source': source_cache,
+                        }
+                        thumbnail_cache.__class__.objects._delete_cache_key(kwargs)
+
                     self.thumbnail_storage.delete(thumbnail_cache.name)
                     # Delete the cache thumbnail instance too.
                     thumbnail_cache.delete()

@@ -296,6 +296,26 @@ class Settings(AppSettings):
     still works as a fall back.
     """
 
+    THUMBNAIL_CACHE = None
+    """
+    Specify name of Django cache to use for additional queryset / URL caching,
+    or `None` to disable
+    """
+
+    THUMBNAIL_QUERYSET_CACHING = False
+    """
+    Set to `True` to enable additional thumbnail queryset caching (for 
+    sources and dimensions) using the Django cache backend specified by 
+    `THUMBNAIL_CACHE`
+    """
+
+    THUMBNAIL_URL_CACHING = False
+    """
+    Set to `True` to enable thumbnail URL caching. This option is mainly 
+    intended to save metadata requests against S3 but should not be used if 
+    signed S3 or CloudFront URLs are being used.
+    """
+
     THUMBNAIL_WIDGET_OPTIONS = {'size': (80, 80)}
     """
     Default options for the

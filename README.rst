@@ -18,6 +18,37 @@ Below is a quick summary of usage. For more comprehensive information, view the
 __ http://easy-thumbnails.readthedocs.org/en/latest/index.html
 
 
+News from the Fork
+==================
+
+This fork adds caching of thumbnail querysets and URLs on the ``caching`` branch. I use this fork in client projects but it has not yet been properly battle-tested, therefore **I do not recommend using it in your own project unless you are very comfortable with what it does and how it might break**. Proceed at your own risk.
+
+URL caching is only really of benefit for remotely-stored files, e.g. on S3. When using ``django-storages`` with S3 a request is made each time the `url` property is referenced, which can get expensive and slow at high volume. If you use signed URLs you should not use this setting, as once the authentication tokens in the cached URL have expired, the URL will stop working.
+
+Install the fork with your package manager of choice. For ``pipenv`` it's:
+
+.. code-block:: console
+
+    pipenv install git+https://github.com/BigglesZX/easy-thumbnails@caching#egg=easy_thumbnails
+
+Otherwise follow the `installation instructions <http://easy-thumbnails.readthedocs.org/en/latest/index.html>`_ of the upstream package.
+
+Specify the name of the Django ``CACHE`` to use and enable caching of URLs and querysets with the following settings:
+
+.. code-block:: python
+
+    THUMBNAIL_CACHE = "default"
+    THUMBNAIL_QUERYSET_CACHING = True
+    THUMBNAIL_URL_CACHING = True
+
+    # This upstream `easy_thumbnails` setting is also recommended
+    THUMBNAIL_CACHE_DIMENSIONS = True
+
+Queryset caching code was inspired by `this pull request <https://github.com/SmileyChris/easy-thumbnails/pull/430/>`_.
+
+You must configure a Django ``CACHE`` to use the functionality in this fork. See the Django docs on caching `here <https://docs.djangoproject.com/en/4.1/topics/cache/>`_.
+
+
 Breaking News
 =============
 
